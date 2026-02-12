@@ -795,7 +795,10 @@ export async function monitorIMessageProvider(opts: MonitorIMessageOpts = {}): P
       }
       return;
     }
-    const historyLimitPerChat = 5;
+    // IMPORTANT: keep this comfortably above the maximum number of outbound chunks the agent
+    // might emit between user messages. If it's too small, polling can see only `is_from_me=true`
+    // rows (our own chunks) and miss the inbound user text entirely.
+    const historyLimitPerChat = 50;
     const timeoutMs = Math.min(probeTimeoutMs, 15_000);
     for (const chat of chats) {
       if (abort?.aborted) {
