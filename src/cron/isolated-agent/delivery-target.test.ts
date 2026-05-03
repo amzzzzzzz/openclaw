@@ -1,5 +1,8 @@
-import { afterAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ChannelId } from "../../channels/plugins/types.js";
 import type { OpenClawConfig } from "../../config/config.js";
+import { setActivePluginRegistry, resetPluginRuntimeStateForTest } from "../../plugins/runtime.js";
+import { createOutboundTestPlugin, createTestRegistry } from "../../test-utils/channel-plugins.js";
 
 vi.mock("../../config/sessions.js", () => ({
   loadSessionStore: vi.fn().mockReturnValue({}),
@@ -40,10 +43,49 @@ import { maybeResolveIdLikeTarget } from "../../infra/outbound/target-resolver.j
 import { readChannelAllowFromStoreSync } from "../../pairing/pairing-store.js";
 import { resolveDeliveryTarget } from "./delivery-target.js";
 
+beforeEach(() => {
+  const createTargetPlugin = (id: ChannelId, label: string) =>
+    createOutboundTestPlugin({
+      id,
+      label,
+      outbound: {
+        deliveryMode: "direct",
+        resolveTarget: ({ to }) => {
+          const trimmed = to?.trim();
+          if (!trimmed) {
+            return { ok: false, error: new Error(`${label} requires target`) };
+          }
+          return { ok: true, to: trimmed };
+        },
+      },
+    });
+
+  setActivePluginRegistry(
+    createTestRegistry([
+      {
+        pluginId: "telegram",
+        source: "test",
+        plugin: createTargetPlugin("telegram" as ChannelId, "Telegram"),
+      },
+      {
+        pluginId: "whatsapp",
+        source: "test",
+        plugin: createTargetPlugin("whatsapp" as ChannelId, "WhatsApp"),
+      },
+      {
+        pluginId: "bluebubbles",
+        source: "test",
+        plugin: createTargetPlugin("bluebubbles" as ChannelId, "BlueBubbles"),
+      },
+    ]),
+  );
+});
+
 afterAll(() => {
   for (const id of mockedModuleIds) {
     vi.doUnmock(id);
   }
+  resetPluginRuntimeStateForTest();
   vi.resetModules();
 });
 
@@ -154,6 +196,94 @@ describe("resolveDeliveryTarget", () => {
     const cfg = makeCfg({ bindings: [] });
     const result = await resolveDeliveryTarget(cfg, AGENT_ID, {
       channel: "whatsapp",
+      to: "+15550000099",
+    });
+
+    expect(result.to).toBe("+15550000099");
+  });
+
+  it("reroutes implicit bluebubbles delivery to the single configured allowFrom recipient", async () => {
+    setLastSessionEntry({
+      sessionId: "sess-b1",
+      lastChannel: "bluebubbles",
+      lastTo: "+15550000099",
+    });
+
+    const cfg = makeCfg({
+      channels: {
+        bluebubbles: {
+          allowFrom: ["+15550000001"],
+        },
+      },
+    });
+    const result = await resolveLastTarget(cfg);
+
+    expect(result.channel).toBe("bluebubbles");
+    expect(result.to).toBe("+15550000001");
+  });
+
+  it("uses account-scoped bluebubbles allowFrom for implicit delivery", async () => {
+    setLastSessionEntry({
+      sessionId: "sess-b-account",
+      lastChannel: "bluebubbles",
+      lastTo: "+15550000099",
+      lastAccountId: "personal",
+    });
+
+    const cfg = makeCfg({
+      channels: {
+        bluebubbles: {
+          allowFrom: ["+15550000001"],
+          accounts: {
+            personal: {
+              allowFrom: ["+15550000002"],
+            },
+          },
+        },
+      },
+    });
+    const result = await resolveLastTarget(cfg);
+
+    expect(result.channel).toBe("bluebubbles");
+    expect(result.to).toBe("+15550000002");
+  });
+
+  it("keeps implicit bluebubbles session target when allowFrom is ambiguous", async () => {
+    setLastSessionEntry({
+      sessionId: "sess-b-ambiguous",
+      lastChannel: "bluebubbles",
+      lastTo: "+15550000099",
+    });
+
+    const cfg = makeCfg({
+      channels: {
+        bluebubbles: {
+          allowFrom: ["+15550000001", "+15550000002"],
+        },
+      },
+    });
+    const result = await resolveLastTarget(cfg);
+
+    expect(result.channel).toBe("bluebubbles");
+    expect(result.to).toBe("+15550000099");
+  });
+
+  it("keeps explicit bluebubbles target unchanged", async () => {
+    setLastSessionEntry({
+      sessionId: "sess-b2",
+      lastChannel: "bluebubbles",
+      lastTo: "+15550000099",
+    });
+
+    const cfg = makeCfg({
+      channels: {
+        bluebubbles: {
+          allowFrom: ["+15550000001"],
+        },
+      },
+    });
+    const result = await resolveDeliveryTarget(cfg, AGENT_ID, {
+      channel: "bluebubbles",
       to: "+15550000099",
     });
 

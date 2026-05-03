@@ -1,3 +1,4 @@
+import { resolveBlueBubblesAccount } from "../../../extensions/bluebubbles/api.js";
 import { resolveWhatsAppAccount } from "../../../extensions/whatsapp/api.js";
 import type { ChannelId } from "../../channels/plugins/types.js";
 import type { OpenClawConfig } from "../../config/config.js";
@@ -169,6 +170,18 @@ export async function resolveDeliveryTarget(
       if (!normalizedCurrentTarget || !allowFromOverride.includes(normalizedCurrentTarget)) {
         toCandidate = allowFromOverride[0];
       }
+    }
+  } else if (channel === "bluebubbles" && mode === "implicit") {
+    const resolvedAccountId = normalizeAccountId(accountId);
+    const configuredAllowFromRaw =
+      resolveBlueBubblesAccount({ cfg, accountId: resolvedAccountId }).config.allowFrom ?? [];
+    const configuredAllowFrom = configuredAllowFromRaw
+      .map((entry) => String(entry).trim())
+      .filter((entry) => entry && entry !== "*");
+    allowFromOverride = [...new Set(configuredAllowFrom)];
+
+    if (allowFromOverride.length === 1) {
+      toCandidate = allowFromOverride[0];
     }
   }
 
